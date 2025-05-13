@@ -1,25 +1,50 @@
 use std::{collections::HashMap, path::PathBuf, process::Command};
 
+use serde::Serialize;
 use walkdir::WalkDir;
+
+mod config;
+mod github;
+mod lang;
+mod pnpm;
+mod util;
+
+#[derive(Clone, Debug)]
+pub struct Locations {
+    root: PathBuf,
+    cache: PathBuf,
+    gen: PathBuf,
+    src: PathBuf,
+    pages: PathBuf,
+    config: PathBuf,
+}
 
 fn main() {
     let root = std::env::current_dir().expect("Failed to get current directory");
+    let locations = Locations {
+        root: root.clone(),
+        cache: root.clone().join("./cache"),
+        gen: root.clone().join("./gen"),
+        src: root.clone().join("./gen/src"),
+        pages: root.clone().join("./gen/src/pages"),
+        config: root.clone().join("./docs/config.json"),
+    };
 
-    let mut gen_folder = root.clone();
-    gen_folder.push("./gen");
+    println!("Locations is {:#?}", locations);
 
-    debug(format!(
-        "Generation folder is {}",
-        gen_folder.canonicalize().unwrap().display()
-    ));
+    if !locations.cache.exists() {
+        std::fs::create_dir(locations.cache.clone()).expect("Failed to create cache folder");
+    }
 
-    if gen_folder.exists() {
+    debug(format!("Generation folder is {}", locations.gen.display()));
+
+    if locations.gen.exists() {
         debug("Deleting gen folder");
-        std::fs::remove_dir_all(gen_folder.clone()).expect("Failed to delete gen folder");
+        std::fs::remove_dir_all(locations.gen.clone()).expect("Failed to delete gen folder");
     }
 
     debug("Creating gen folder");
-    std::fs::create_dir(gen_folder.clone()).expect("Failed to create gen folder");
+    std::fs::create_dir(locations.gen.clone()).expect("Failed to create gen folder");
 
     let places = HashMap::from([
         ("package.json", include_str!("./resources/package.json")),
@@ -33,21 +58,14 @@ fn main() {
     ]);
 
     for (key, value) in places {
-        let mut location = gen_folder.clone();
+        let mut location = locations.gen.clone();
         location.push(format!("./{}", key));
         debug(format!("Writing {} into {}", key, location.display()));
         std::fs::write(location, value).expect("Failed to write!");
     }
 
-    debug("Generating src folder");
-    let mut src = gen_folder.clone();
-    src.push("./src");
-    std::fs::create_dir(src.clone()).expect("Failed to create src folder");
-
-    debug("Creating pages folder");
-    let mut pages = src.clone();
-    pages.push("./pages");
-    std::fs::create_dir(pages.clone()).expect("Failed to create pages folder");
+    std::fs::create_dir(locations.src.clone()).expect("Failed to create src folder");
+    std::fs::create_dir(locations.pages.clone()).expect("Failed to create pages folder");
 
     let mut md_files_path = root.clone();
     md_files_path.push("./docs/md");
@@ -59,7 +77,7 @@ fn main() {
     let mut id: u8 = 0;
     for (file_name, contents) in md_files {
         let name = format!("Gen_{}", id);
-        let mut react_md_file_path = pages.clone();
+        let mut react_md_file_path = locations.pages.clone();
         react_md_file_path.push(format!("./{}.jsx", name));
         debug(format!(
             "Generating {} as {} at {}",
@@ -82,7 +100,7 @@ fn main() {
     }
 
     debug(format!("Creating main.jsx file"));
-    let mut main_file = src.clone();
+    let mut main_file = locations.src.clone();
     main_file.push("./main.jsx");
     let main_jsx = include_str!("./resources/main.jsx")
         .replace(
@@ -91,6 +109,12 @@ fn main() {
                 .iter()
                 .map(|e| format!("import {} from \"./pages/{}.jsx\";", e.1, e.1))
                 .collect::<String>(),
+        )
+        .replace(
+            "$config",
+            serde_json::to_string(&config::Config::new(locations.clone()))
+                .unwrap()
+                .as_str(),
         )
         .replace(
             "$routes",
@@ -113,40 +137,22 @@ fn main() {
                     format!(
                         "<Link noHighlight href=\"/{}\">{}</Link>",
                         get_actual_md_route_path(e.0),
-                        get_actual_md_route_path(e.0)
+                        lang::kebab_to_english(get_actual_md_route_path(e.0))
                     )
                 })
                 .collect::<String>(),
         );
     std::fs::write(main_file, main_jsx).expect("Failed to create main file");
 
-    debug("Cloning dawn-ui");
-    let status = Command::new("git")
-        .arg("clone")
-        .arg("https://github.com/itevie/dawn-ui")
-        .current_dir(src.clone())
-        .status()
-        .expect("Failed to clone dawn-ui");
-    if !status.success() {
-        panic!("Failde to run git clone! Status: {}", status);
-    }
-
-    debug("Running pnpm install");
-    let status = Command::new("pnpm")
-        .arg("install")
-        .current_dir(gen_folder.clone())
-        .status()
-        .expect("Failed to run pnpm install");
-    if !status.success() {
-        panic!("Failed to run pnpm install! Status: {}", status);
-    }
+    github::download_dawn_ui(locations.clone());
+    pnpm::install(locations.clone());
 
     debug("Running pnpm run build");
 
     let status = Command::new("pnpm")
         .arg("run")
         .arg("dev")
-        .current_dir(gen_folder)
+        .current_dir(locations.gen)
         .status()
         .expect("Failed to run pnpm install");
     if !status.success() {

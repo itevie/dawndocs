@@ -11,15 +11,16 @@ import "./dawn-ui/index.js";
 import Row from "./dawn-ui/components/Row.js";
 import Column from "./dawn-ui/components/Column.js";
 import Sidebar from "./dawn-ui/components/Sidebar.js";
-import Content from "./dawn-ui/components/Content.js";
 import Navbar from "./dawn-ui/components/Navbar.js";
 import FullPage from "./dawn-ui/components/FullPage.js";
 import Link from "./dawn-ui/components/Link.js";
 
+export const config = $config;
+
 function App() {
   return (
     <FullPage style={{ overflow: "hidden" }}>
-      <Navbar title={"$doc_title"} noPage>
+      <Navbar title={config.title} noPage>
         <Row></Row>
       </Navbar>
       <Row className="full-page" util={["no-gap"]}>
